@@ -1,4 +1,4 @@
-name: Seckill HUD MAX Final Fixed Build
+name: Seckill HUD MAX Stable Build
 
 on:
   push:
@@ -22,11 +22,11 @@ jobs:
       with:
         ndk-version: r25c
         
-    - name: Assemble Complete Project with All Modules
+    - name: Assemble Stable Project
       run: |
-        mkdir -p app/src/main/cpp app/src/main/java/com/example/seckillcloc app/src/main/res/xml app/src/main/res/values app/src/main
+        mkdir -p app/src/main/cpp app/src/main/java/com/example/seckillcloc app/src/main/res/xml app/src/main/res/values app/src/main/res/layout
         
-        # 1. 根目录 build.gradle (已移除冲突的 allprojects 仓库声明)
+        # 1. 根目录 build.gradle
         cat << 'EOF' > build.gradle
         buildscript {
             repositories {
@@ -62,7 +62,7 @@ jobs:
         include ':app'
         EOF
 
-        # 3. app/build.gradle
+        # 3. app/build.gradle (精简无 Compose 依赖，杜绝版本冲突)
         cat << 'EOF' > app/build.gradle
         plugins {
             id 'com.android.application'
@@ -96,12 +96,6 @@ jobs:
                 sourceCompatibility JavaVersion.VERSION_17
                 targetCompatibility JavaVersion.VERSION_17
             }
-            buildFeatures {
-                compose true
-            }
-            composeOptions {
-                kotlinCompilerExtensionVersion '1.5.3'
-            }
             externalNativeBuild {
                 cmake {
                     path file('src/main/cpp/CMakeLists.txt')
@@ -111,13 +105,9 @@ jobs:
         }
         dependencies {
             implementation 'androidx.core:core-ktx:1.12.0'
-            implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
-            implementation 'androidx.activity:activity-compose:1.8.2'
-            implementation platform('androidx.compose:compose-bom:2023.10.01')
-            implementation 'androidx.compose.ui:ui'
-            implementation 'androidx.compose.ui:ui-graphics'
-            implementation 'androidx.compose.ui:ui-tooling-preview'
-            implementation 'androidx.compose.material3:material3'
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+            implementation 'com.google.android.material:material:1.11.0'
+            implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
         }
         EOF
 
@@ -189,13 +179,11 @@ jobs:
         }
         EOF
 
-        # 6. Java 桥接类与时间同步辅助类
+        # 6. Java 桥接类与时间同步
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/NativeTime.java
         package com.example.seckillcloc;
         public class NativeTime {
-            static {
-                System.loadLibrary("seckill_core");
-            }
+            static { System.loadLibrary("seckill_core"); }
             public static native long syncNtpServer(String host);
             public static native long getNativeTimestamp();
         }
@@ -217,18 +205,14 @@ jobs:
                     long end = System.currentTimeMillis();
                     long rtt = end - start;
                     conn.disconnect();
-                    if (date > 0) {
-                        return (date + (rtt / 2)) - end;
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                    if (date > 0) return (date + (rtt / 2)) - end;
+                } catch (Exception e) { e.printStackTrace(); }
                 return 0L;
             }
         }
         EOF
 
-        # 7. 悬浮窗服务 FloatingHudService.kt
+        # 7. 悬浮窗服务
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/FloatingHudService.kt
         package com.example.seckillcloc
 
@@ -314,7 +298,7 @@ jobs:
         }
         EOF
 
-        # 8. 无障碍服务 AutoSniperService.kt
+        # 8. 无障碍服务
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/AutoSniperService.kt
         package com.example.seckillcloc
 
@@ -340,7 +324,7 @@ jobs:
         }
         EOF
 
-        # 9. 主界面 MainActivity.kt
+        # 9. 主界面 MainActivity (原生经典布局)
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/MainActivity.kt
         package com.example.seckillcloc
 
@@ -348,43 +332,52 @@ jobs:
         import android.net.Uri
         import android.os.Bundle
         import android.provider.Settings
-        import androidx.activity.ComponentActivity
-        import androidx.activity.compose.setContent
-        import androidx.compose.foundation.layout.*
-        import androidx.compose.material3.*
-        import androidx.compose.runtime.*
-        import androidx.compose.ui.Alignment
-        import androidx.compose.ui.Modifier
-        import androidx.compose.ui.text.font.FontWeight
-        import androidx.compose.ui.unit.dp
-        import androidx.compose.ui.unit.sp
+        import android.widget.Button
+        import android.widget.RadioButton
+        import android.widget.SeekBar
+        import android.widget.Switch
+        import android.widget.TextView
+        import androidx.appcompat.app.AppCompatActivity
         import androidx.lifecycle.lifecycleScope
         import kotlinx.coroutines.Dispatchers
         import kotlinx.coroutines.launch
         import kotlinx.coroutines.withContext
 
-        data class TimeSource(val name: String, val host: String)
-        val TIME_SOURCES = listOf(
-            TimeSource("淘宝 / 天猫", "api.m.taobao.com"),
-            TimeSource("京东", "api.m.jd.com")
-        )
+        class MainActivity : AppCompatActivity() {
+            private var userOffsetMs: Int = 0
 
-        class MainActivity : ComponentActivity() {
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
-                setContent {
-                    MaterialTheme(colorScheme = darkColorScheme()) {
-                        Surface(modifier = Modifier.fillMaxSize()) {
-                            TacticalSettingsScreen(
-                                onDeploy = { source, offsetMs, isAuto -> deployHud(source, offsetMs, isAuto) },
-                                onTerminate = { stopService(Intent(this, FloatingHudService::class.java)) }
-                            )
-                        }
+                setContentView(R.layout.activity_main)
+
+                val rbTaobao = findViewById<RadioButton>(R.id.rbTaobao)
+                val seekBar = findViewById<SeekBar>(R.id.seekBarOffset)
+                val tvOffsetVal = findViewById<TextView>(R.id.tvOffsetVal)
+                val switchAuto = findViewById<Switch>(R.id.switchAuto)
+                val btnDeploy = findViewById<Button>(R.id.btnDeploy)
+                val btnTerminate = findViewById<Button>(R.id.btnTerminate)
+
+                seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                        userOffsetMs = progress - 500
+                        tvOffsetVal.text = "补偿: ${userOffsetMs} ms"
                     }
+                    override fun onStartTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {}
+                })
+
+                btnDeploy.setOnClickListener {
+                    val host = if (rbTaobao.isChecked) "api.m.taobao.com" else "api.m.jd.com"
+                    val isAuto = switchAuto.isChecked
+                    deployHud(host, userOffsetMs, isAuto)
+                }
+
+                btnTerminate.setOnClickListener {
+                    stopService(Intent(this, FloatingHudService::class.java))
                 }
             }
 
-            private fun deployHud(source: TimeSource, userOffset: Int, isAutoMode: Boolean) {
+            private fun deployHud(host: String, userOffset: Int, isAutoMode: Boolean) {
                 if (!Settings.canDrawOverlays(this)) {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                     return
@@ -396,7 +389,7 @@ jobs:
 
                 lifecycleScope.launch(Dispatchers.IO) {
                     val ntpOffset = NativeTime.syncNtpServer("ntp.aliyun.com")
-                    val httpOffset = TimeSynchronizer.syncHttpOffset("https://${source.host}")
+                    val httpOffset = TimeSynchronizer.syncHttpOffset("https://$host")
                     val networkOffset = if (httpOffset != 0L) httpOffset else ntpOffset
                     val finalOffset = networkOffset + userOffset
 
@@ -411,83 +404,97 @@ jobs:
                 }
             }
         }
-
-        @Composable
-        fun TacticalSettingsScreen(onDeploy: (TimeSource, Int, Boolean) -> Unit, onTerminate: () -> Unit) {
-            var selectedSource by remember { mutableStateOf(TIME_SOURCES[0]) }
-            var offsetMs by remember { mutableStateOf(0f) }
-            var isAutoMode by remember { mutableStateOf(false) }
-
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text("SECKILL HUD MAX", fontSize = 32.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("目标时源 (Time Source)", fontWeight = FontWeight.Bold)
-                        TIME_SOURCES.forEach { source ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = (source == selectedSource), onClick = { selectedSource = source })
-                                Text(source.name)
-                            }
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("网络延迟补偿: ${offsetMs.toInt()} ms", fontWeight = FontWeight.Bold)
-                        Slider(value = offsetMs, onValueChange = { offsetMs = it }, valueRange = -500f..500f, steps = 100)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("自动开火模式", fontWeight = FontWeight.Bold)
-                            Text(if (isAutoMode) "到点由无障碍内核自动点击" else "仅视觉提示，手动点击", fontSize = 12.sp)
-                        }
-                        Switch(checked = isAutoMode, onCheckedChange = { isAutoMode = it })
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = { onDeploy(selectedSource, offsetMs.toInt(), isAutoMode) },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("DEPLOY / 终极部署", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = onTerminate,
-                    modifier = Modifier.fillMaxWidth().height(56.dp)
-                ) {
-                    Text("TERMINATE / 关闭服务", fontSize = 18.sp)
-                }
-            }
-        }
         EOF
 
-        # 10. 资源与无障碍配置
+        # 10. 原生布局文件 activity_main.xml
+        cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="24dp"
+            android:gravity="center"
+            android:background="#121212">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SECKILL HUD MAX"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="32dp"/>
+
+            <RadioGroup
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="24dp">
+                <RadioButton
+                    android:id="@+id/rbTaobao"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="淘宝/天猫"
+                    android:checked="true"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginEnd="24dp"/>
+                <RadioButton
+                    android:id="@+id/rbJd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="京东"
+                    android:textColor="#FFFFFF"/>
+            </RadioGroup>
+
+            <TextView
+                android:id="@+id/tvOffsetVal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="补偿: 0 ms"
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="8dp"/>
+
+            <SeekBar
+                android:id="@+id/seekBarOffset"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="1000"
+                android:progress="500"
+                android:layout_marginBottom="24dp"/>
+
+            <Switch
+                android:id="@+id/switchAuto"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="自动开火模式 (无障碍)"
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="32dp"/>
+
+            <Button
+                android:id="@+id/btnDeploy"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:text="DEPLOY / 终极部署"
+                android:textSize="16sp"
+                android:backgroundTint="#FF3B30"
+                android:layout_marginBottom="12dp"/>
+
+            <Button
+                android:id="@+id/btnTerminate"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:text="TERMINATE / 关闭服务"
+                android:textSize="16sp"
+                android:backgroundTint="#333333"/>
+        </LinearLayout>
+        EOF
+
+        # 11. 资源与配置
         cat << 'EOF' > app/src/main/res/values/strings.xml
         <resources>
             <string name="app_name">Seckill HUD MAX</string>
-            <string name="accessibility_service_description">Seckill HUD 自动化无障碍点击服务，用于毫秒级抢购触发。</string>
+            <string name="accessibility_service_description">Seckill HUD 自动化无障碍点击服务</string>
         </resources>
         EOF
 
@@ -501,16 +508,12 @@ jobs:
             android:notificationTimeout="0" />
         EOF
 
-        # 11. ProGuard 防混淆规则
         cat << 'EOF' > app/proguard-rules.pro
-        -keep class com.example.seckillcloc.NativeTime {
-            native <methods>;
-        }
+        -keep class com.example.seckillcloc.NativeTime { native <methods>; }
         -keep public class com.example.seckillcloc.FloatingHudService { *; }
         -keep public class com.example.seckillcloc.AutoSniperService { *; }
         EOF
 
-        # 12. AndroidManifest.xml
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -520,7 +523,7 @@ jobs:
                 android:allowBackup="true"
                 android:label="@string/app_name"
                 android:supportsRtl="true"
-                android:theme="@style/Theme.AppCompat.Dark.NoActionBar">
+                android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
                 <activity
                     android:name=".MainActivity"
                     android:exported="true">
@@ -548,7 +551,7 @@ jobs:
         </manifest>
         EOF
 
-        # 13. 编译打包
+        # 12. 编译打包 (带 stacktrace 方便查错)
         gradle wrapper
         chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
