@@ -25,7 +25,17 @@ jobs:
     - name: Assemble Stable Project
       run: |
         mkdir -p app/src/main/cpp app/src/main/java/com/example/seckillcloc app/src/main/res/xml app/src/main/res/values app/src/main/res/layout
+        mkdir -p gradle/wrapper
         
+        # 0. 强制写死 Gradle 8.4 的 wrapper 配置文件，彻底避开全局 Gradle 9 的影响
+        cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
+        distributionBase=GRADLE_USER_HOME
+        distributionPath=wrapper/dists
+        distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
+        zipStoreBase=GRADLE_USER_HOME
+        zipStorePath=wrapper/dists
+        EOF
+
         # 1. 根目录 build.gradle
         cat << 'EOF' > build.gradle
         buildscript {
@@ -314,7 +324,7 @@ jobs:
             override fun onInterrupt() {}
             override fun onUnbind(intent: android.content.Intent?): Boolean { instance = null; return super.onUnbind(intent) }
 
-            fn executeAutoClick(x: Float, y: Float) {
+            fun executeAutoClick(x: Float, y: Float) {
                 val path = Path().apply { moveTo(x, y) }
                 val gesture = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, 10))
@@ -551,10 +561,7 @@ jobs:
         </manifest>
         EOF
 
-        # 12. 核心修复：使用纯 wrapper 脚本初始化并强制制定低版本，绕过全局 Gradle 9
-        mvn_or_gradle_setup() {
-            gradle wrapper --gradle-version 8.4 --distribution-type all
-        }
+        # 12. 使用显式写好的 Wrapper 直接执行构建
         gradle wrapper --gradle-version 8.4 --distribution-type all
         
         chmod +x gradlew
