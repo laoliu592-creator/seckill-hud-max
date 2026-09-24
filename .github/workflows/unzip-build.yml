@@ -23,7 +23,14 @@ jobs:
         ndk-version: r25c
     - name: Compile APK
       run: |
-        GRADLE_DIR=$(dirname $(find project_src -name gradlew | head -n 1))
+        echo "Searching for gradlew..."
+        GRADLEW_PATH=$(find project_src -name "gradlew" -type f | head -n 1)
+        if [ -z "$GRADLEW_PATH" ]; then
+          echo "Error: gradlew not found!"
+          exit 1
+        fi
+        GRADLE_DIR=$(dirname "$GRADLEW_PATH")
+        echo "Found gradlew in: $GRADLE_DIR"
         cd "$GRADLE_DIR"
         chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
