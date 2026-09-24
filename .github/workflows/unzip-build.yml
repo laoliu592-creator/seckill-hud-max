@@ -1,4 +1,4 @@
-name: Seckill HUD MAX Direct Build
+name: Seckill HUD MAX Final Perfect Build
 
 on:
   push:
@@ -22,12 +22,11 @@ jobs:
       with:
         ndk-version: r25c
         
-    - name: Generate Android Project Structure
+    - name: Assemble Complete Project with All Modules
       run: |
-        echo "Creating project directories..."
-        mkdir -p app/src/main/cpp app/src/main/java/com/seckill/hud app/src/main/res/values app/src/main/res/drawable
+        mkdir -p app/src/main/cpp app/src/main/java/com/example/seckillcloc app/src/main/res/xml app/src/main/res/values app/src/main
         
-        # 1. 创建根目录 build.gradle
+        # 1. 根目录 build.gradle
         cat << 'EOF' > build.gradle
         buildscript {
             repositories {
@@ -49,7 +48,7 @@ jobs:
         }
         EOF
 
-        # 2. 创建 settings.gradle
+        # 2. settings.gradle
         cat << 'EOF' > settings.gradle
         pluginManagement {
             repositories {
@@ -65,24 +64,24 @@ jobs:
                 mavenCentral()
             }
         }
-        rootProject.name = "SeckillHUDMax"
+        rootProject.name = "SeckillCloc"
         include ':app'
         EOF
 
-        # 3. 创建 app/build.gradle
+        # 3. app/build.gradle
         cat << 'EOF' > app/build.gradle
         plugins {
             id 'com.android.application'
         }
         android {
-            namespace 'com.seckill.hud'
+            namespace 'com.example.seckillcloc'
             compileSdk 34
             defaultConfig {
-                applicationId "com.seckill.hud.max"
+                applicationId "com.example.seckillcloc"
                 minSdk 26
                 targetSdk 34
                 versionCode 1
-                versionName "1.0"
+                versionName "1.0.0"
                 externalNativeBuild {
                     cmake {
                         cppFlags "-std=c++17 -O3"
@@ -91,6 +90,10 @@ jobs:
             }
             buildTypes {
                 release {
+                    minifyEnabled true
+                    proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                }
+                debug {
                     minifyEnabled false
                     proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                 }
@@ -98,6 +101,12 @@ jobs:
             compileOptions {
                 sourceCompatibility JavaVersion.VERSION_17
                 targetCompatibility JavaVersion.VERSION_17
+            }
+            buildFeatures {
+                compose true
+            }
+            composeOptions {
+                kotlinCompilerExtensionVersion '1.5.3'
             }
             externalNativeBuild {
                 cmake {
@@ -107,12 +116,18 @@ jobs:
             }
         }
         dependencies {
-            implementation 'androidx.appcompat:appcompat:1.6.1'
-            implementation 'com.google.android.material:material:1.9.0'
+            implementation 'androidx.core:core-ktx:1.12.0'
+            implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+            implementation 'androidx.activity:activity-compose:1.8.2'
+            implementation platform('androidx.compose:compose-bom:2023.10.01')
+            implementation 'androidx.compose.ui:ui'
+            implementation 'androidx.compose.ui:ui-graphics'
+            implementation 'androidx.compose.ui:ui-tooling-preview'
+            implementation 'androidx.compose.material3:material3'
         }
         EOF
 
-        # 4. 创建 CMakeLists.txt (C++ 毫秒级授时与核心底层)
+        # 4. CMakeLists.txt
         cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
         cmake_minimum_required(VERSION 3.22.1)
         project("seckill_core")
@@ -121,52 +136,397 @@ jobs:
         target_link_libraries(seckill_core ${log-lib})
         EOF
 
-        # 5. 创建 native-lib.cpp
+        # 5. C++ 授时内核 native-lib.cpp
         cat << 'EOF' > app/src/main/cpp/native-lib.cpp
         #include <jni.h>
         #include <string>
+        #include <sys/time.h>
+        #include <sys/socket.h>
+        #include <netdb.h>
+        #include <arpa/inet.h>
+        #include <unistd.h>
         #include <chrono>
 
+        static long long time_offset_ms = 0;
+        #define NTP_TIMESTAMP_DELTA 2208988800ull
+
         extern "C" JNIEXPORT jlong JNICALL
-        Java_com_seckill_hud_MainActivity_getPreciseNanos(JNIEnv* env, jobject thiz) {
-            auto now = std::chrono::high_resolution_clock::now();
-            return std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        Java_com_example_seckillcloc_NativeTime_syncNtpServer(JNIEnv *env, jobject thiz, jstring host_) {
+            const char *host = env->GetStringUTFChars(host_, nullptr);
+            struct sockaddr_in serv_addr;
+            int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sockfd < 0) {
+                env->ReleaseStringUTFChars(host_, host);
+                return 0;
+            }
+            struct timeval tv{2, 0};
+            setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+            struct hostent *server = gethostbyname(host);
+            if (!server) { close(sockfd); env->ReleaseStringUTFChars(host_, host); return 0; }
+
+            memset(&serv_addr, 0, sizeof(serv_addr));
+            serv_addr.sin_family = AF_INET;
+            memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+            serv_addr.sin_port = htons(123);
+
+            unsigned long msg[12] = {0};
+            msg[0] = htonl(0x1B000000);
+            auto t1 = std::chrono::high_resolution_clock::now();
+            sendto(sockfd, (char*)msg, sizeof(msg), 0, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+            if (recv(sockfd, (char*)msg, sizeof(msg), 0) < 0) { close(sockfd); env->ReleaseStringUTFChars(host_, host); return 0; }
+            auto t2 = std::chrono::high_resolution_clock::now();
+            close(sockfd);
+            env->ReleaseStringUTFChars(host_, host);
+
+            unsigned long tntp = ntohl(msg[40]);
+            unsigned long long ntp_time_ms = ((unsigned long long)tntp - NTP_TIMESTAMP_DELTA) * 1000ULL;
+            long long rtt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+            long long current_local_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+            time_offset_ms = (ntp_time_ms + (rtt_ms / 2)) - current_local_ms;
+            return time_offset_ms;
+        }
+
+        extern "C" JNIEXPORT jlong JNICALL
+        Java_com_example_seckillcloc_NativeTime_getNativeTimestamp(JNIEnv *env, jobject thiz) {
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            return ((long long)tv.tv_sec * 1000LL + (long long)tv.tv_usec / 1000LL) + time_offset_ms;
         }
         EOF
 
-        # 6. 创建 MainActivity.java
-        cat << 'EOF' > app/src/main/java/com/seckill/hud/MainActivity.java
-        package com.seckill.hud;
-
-        import android.os.Bundle;
-        import android.widget.TextView;
-        import androidx.appcompat.app.AppCompatActivity;
-
-        public class MainActivity extends AppCompatActivity {
+        # 6. Java 桥接类与时间同步辅助类
+        cat << 'EOF' > app/src/main/java/com/example/seckillcloc/NativeTime.java
+        package com.example.seckillcloc;
+        public class NativeTime {
             static {
                 System.loadLibrary("seckill_core");
             }
-            public native long getPreciseNanos();
+            public static native long syncNtpServer(String host);
+            public static native long getNativeTimestamp();
+        }
+        EOF
 
-            @Override
-            protected void onCreate(Bundle savedInstanceState) {
-                super.onCreate(savedInstanceState);
-                TextView tv = new TextView(this);
-                tv.setText("Seckill HUD MAX Running\nNano Time: " + getPreciseNanos());
-                tv.setTextSize(20);
-                setContentView(tv);
+        cat << 'EOF' > app/src/main/java/com/example/seckillcloc/TimeSynchronizer.java
+        package com.example.seckillcloc;
+        import java.net.HttpURLConnection;
+        import java.net.URL;
+        public class TimeSynchronizer {
+            public static long syncHttpOffset(String urlStr) {
+                try {
+                    long start = System.currentTimeMillis();
+                    URL url = new URL(urlStr);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("HEAD");
+                    conn.connect();
+                    long date = conn.getDate();
+                    long end = System.currentTimeMillis();
+                    long rtt = end - start;
+                    conn.disconnect();
+                    if (date > 0) {
+                        return (date + (rtt / 2)) - end;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                return 0L;
             }
         }
         EOF
 
-        # 7. 创建 AndroidManifest.xml
+        # 7. 悬浮窗服务 FloatingHudService.kt
+        cat << 'EOF' > app/src/main/java/com/example/seckillcloc/FloatingHudService.kt
+        package com.example.seckillcloc
+
+        import android.app.Service
+        import android.content.Intent
+        import android.graphics.Color
+        import android.graphics.PixelFormat
+        import android.os.IBinder
+        import android.view.Choreographer
+        import android.view.Gravity
+        import android.view.WindowManager
+        import android.widget.TextView
+        import java.text.SimpleDateFormat
+        import java.util.*
+
+        class FloatingHudService : Service() {
+            private lateinit var wm: WindowManager
+            private lateinit var hudView: TextView
+            private val formatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+            private var timeOffsetMs: Int = 0
+            private var isAutoMode: Boolean = false
+            private var hasFired: Boolean = false
+
+            private val frameCallback = object : Choreographer.FrameCallback {
+                override fun doFrame(frameTimeNanos: Long) {
+                    val currentTs = NativeTime.getNativeTimestamp() + timeOffsetMs
+                    val msPart = currentTs % 60000
+                    hudView.text = formatter.format(Date(currentTs))
+
+                    if (msPart > 59000) {
+                        hudView.setTextColor(Color.parseColor("#FF3B30"))
+                        if (isAutoMode && !hasFired && msPart > 59980) {
+                            hasFired = true
+                            val location = IntArray(2)
+                            hudView.getLocationOnScreen(location)
+                            AutoSniperService.instance?.executeAutoClick(
+                                location[0] + (hudView.width / 2f),
+                                location[1] + (hudView.height / 2f)
+                            )
+                            hudView.text = "FIRE!"
+                        }
+                    } else {
+                        hudView.setTextColor(Color.parseColor("#00FF00"))
+                        hasFired = false
+                    }
+                    Choreographer.getInstance().postFrameCallback(this)
+                }
+            }
+
+            override fun onCreate() {
+                super.onCreate()
+                wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                hudView = TextView(this).apply {
+                    textSize = 28f
+                    setShadowLayer(4f, 2f, 2f, Color.BLACK)
+                    typeface = android.graphics.Typeface.MONOSPACE
+                }
+                val p = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT
+                ).apply { gravity = Gravity.CENTER }
+                wm.addView(hudView, p)
+            }
+
+            override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                intent?.let {
+                    timeOffsetMs = it.getIntExtra("TIME_OFFSET", 0)
+                    isAutoMode = it.getBooleanExtra("AUTO_MODE", false)
+                }
+                Choreographer.getInstance().removeFrameCallback(frameCallback)
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+                return super.onStartCommand(intent, flags, startId)
+            }
+
+            override fun onDestroy() {
+                super.onDestroy()
+                Choreographer.getInstance().removeFrameCallback(frameCallback)
+                if (::hudView.isInitialized) wm.removeView(hudView)
+            }
+            override fun onBind(i: Intent?): IBinder? = null
+        }
+        EOF
+
+        # 8. 无障碍服务 AutoSniperService.kt
+        cat << 'EOF' > app/src/main/java/com/example/seckillcloc/AutoSniperService.kt
+        package com.example.seckillcloc
+
+        import android.accessibilityservice.AccessibilityService
+        import android.accessibilityservice.GestureDescription
+        import android.graphics.Path
+        import android.view.accessibility.AccessibilityEvent
+
+        class AutoSniperService : AccessibilityService() {
+            companion object { var instance: AutoSniperService? = null }
+            override fun onServiceConnected() { super.onServiceConnected(); instance = this }
+            override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+            override fun onInterrupt() {}
+            override fun onUnbind(intent: android.content.Intent?): Boolean { instance = null; return super.onUnbind(intent) }
+
+            fun executeAutoClick(x: Float, y: Float) {
+                val path = Path().apply { moveTo(x, y) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 10))
+                    .build()
+                dispatchGesture(gesture, null, null)
+            }
+        }
+        EOF
+
+        # 9. 主界面 MainActivity.kt
+        cat << 'EOF' > app/src/main/java/com/example/seckillcloc/MainActivity.kt
+        package com.example.seckillcloc
+
+        import android.content.Intent
+        import android.net.Uri
+        import android.os.Bundle
+        import android.provider.Settings
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.setContent
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.text.font.FontWeight
+        import androidx.compose.ui.unit.dp
+        import androidx.compose.ui.unit.sp
+        import androidx.lifecycle.lifecycleScope
+        import kotlinx.coroutines.Dispatchers
+        import kotlinx.coroutines.launch
+        import kotlinx.coroutines.withContext
+
+        data class TimeSource(val name: String, val host: String)
+        val TIME_SOURCES = listOf(
+            TimeSource("淘宝 / 天猫", "api.m.taobao.com"),
+            TimeSource("京东", "api.m.jd.com")
+        )
+
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme()) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            TacticalSettingsScreen(
+                                onDeploy = { source, offsetMs, isAuto -> deployHud(source, offsetMs, isAuto) },
+                                onTerminate = { stopService(Intent(this, FloatingHudService::class.java)) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            private fun deployHud(source: TimeSource, userOffset: Int, isAutoMode: Boolean) {
+                if (!Settings.canDrawOverlays(this)) {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    return
+                }
+                if (isAutoMode && AutoSniperService.instance == null) {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    return
+                }
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val ntpOffset = NativeTime.syncNtpServer("ntp.aliyun.com")
+                    val httpOffset = TimeSynchronizer.syncHttpOffset("https://${source.host}")
+                    val networkOffset = if (httpOffset != 0L) httpOffset else ntpOffset
+                    val finalOffset = networkOffset + userOffset
+
+                    withContext(Dispatchers.Main) {
+                        val intent = Intent(this@MainActivity, FloatingHudService::class.java).apply {
+                            putExtra("TIME_OFFSET", finalOffset.toInt())
+                            putExtra("AUTO_MODE", isAutoMode)
+                        }
+                        startService(intent)
+                        moveTaskToBack(true)
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun TacticalSettingsScreen(onDeploy: (TimeSource, Int, Boolean) -> Unit, onTerminate: () -> Unit) {
+            var selectedSource by remember { mutableStateOf(TIME_SOURCES[0]) }
+            var offsetMs by remember { mutableStateOf(0f) }
+            var isAutoMode by remember { mutableStateOf(false) }
+
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("SECKILL HUD MAX", fontSize = 32.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("目标时源 (Time Source)", fontWeight = FontWeight.Bold)
+                        TIME_SOURCES.forEach { source ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = (source == selectedSource), onClick = { selectedSource = source })
+                                Text(source.name)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("网络延迟补偿: ${offsetMs.toInt()} ms", fontWeight = FontWeight.Bold)
+                        Slider(value = offsetMs, onValueChange = { offsetMs = it }, valueRange = -500f..500f, steps = 100)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("自动开火模式", fontWeight = FontWeight.Bold)
+                            Text(if (isAutoMode) "到点由无障碍内核自动点击" else "仅视觉提示，手动点击", fontSize = 12.sp)
+                        }
+                        Switch(checked = isAutoMode, onCheckedChange = { isAutoMode = it })
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { onDeploy(selectedSource, offsetMs.toInt(), isAutoMode) },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("DEPLOY / 终极部署", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onTerminate,
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) {
+                    Text("TERMINATE / 关闭服务", fontSize = 18.sp)
+                }
+            }
+        }
+        EOF
+
+        # 10. 资源与无障碍配置
+        cat << 'EOF' > app/src/main/res/values/strings.xml
+        <resources>
+            <string name="app_name">Seckill HUD MAX</string>
+            <string name="accessibility_service_description">Seckill HUD 自动化无障碍点击服务，用于毫秒级抢购触发。</string>
+        </resources>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/xml/accessibility_service_config.xml
+        <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+            android:accessibilityEventTypes="typeWindowStateChanged"
+            android:accessibilityFeedbackType="feedbackGeneric"
+            android:accessibilityFlags="flagDefault"
+            android:canPerformGestures="true"
+            android:description="@string/app_name"
+            android:notificationTimeout="0" />
+        EOF
+
+        # 11. ProGuard 防混淆规则
+        cat << 'EOF' > app/proguard-rules.pro
+        -keep class com.example.seckillcloc.NativeTime {
+            native <methods>;
+        }
+        -keep public class com.example.seckillcloc.FloatingHudService { *; }
+        -keep public class com.example.seckillcloc.AutoSniperService { *; }
+        EOF
+
+        # 12. AndroidManifest.xml
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+            <uses-permission android:name="android.permission.INTERNET" />
+            
             <application
                 android:allowBackup="true"
-                android:label="Seckill HUD MAX"
+                android:label="@string/app_name"
                 android:supportsRtl="true"
-                android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                android:theme="@style/Theme.AppCompat.Dark.NoActionBar">
                 <activity
                     android:name=".MainActivity"
                     android:exported="true">
@@ -175,15 +535,27 @@ jobs:
                         <category android:name="android.intent.category.LAUNCHER" />
                     </intent-filter>
                 </activity>
+                <service
+                    android:name=".FloatingHudService"
+                    android:enabled="true"
+                    android:exported="false" />
+                <service
+                    android:name=".AutoSniperService"
+                    android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.accessibilityservice.AccessibilityService" />
+                    </intent-filter>
+                    <meta-data
+                        android:name="android.accessibilityservice"
+                        android:resource="@xml/accessibility_service_config" />
+                </service>
             </application>
         </manifest>
         EOF
 
-        # 8. 生成 Gradle 包装器所需文件
+        # 13. 编译打包
         gradle wrapper
-        
-    - name: Compile APK with Gradle
-      run: |
         chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
         
