@@ -1,4 +1,4 @@
-name: Seckill HUD MAX Final Perfect Build
+name: Seckill HUD MAX Final Fixed Build
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
       run: |
         mkdir -p app/src/main/cpp app/src/main/java/com/example/seckillcloc app/src/main/res/xml app/src/main/res/values app/src/main
         
-        # 1. 根目录 build.gradle
+        # 1. 根目录 build.gradle (已移除冲突的 allprojects 仓库声明)
         cat << 'EOF' > build.gradle
         buildscript {
             repositories {
@@ -35,12 +35,6 @@ jobs:
             }
             dependencies {
                 classpath 'com.android.tools.build:gradle:8.1.0'
-            }
-        }
-        allprojects {
-            repositories {
-                google()
-                mavenCentral()
             }
         }
         task clean(type: Delete) {
