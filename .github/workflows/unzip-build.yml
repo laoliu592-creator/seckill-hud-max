@@ -1,4 +1,4 @@
-name: Seckill HUD MAX Stable Build
+name: Seckill HUD MAX Fixed Gradle Build
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
         include ':app'
         EOF
 
-        # 3. app/build.gradle (精简无 Compose 依赖，杜绝版本冲突)
+        # 3. app/build.gradle
         cat << 'EOF' > app/build.gradle
         plugins {
             id 'com.android.application'
@@ -179,7 +179,7 @@ jobs:
         }
         EOF
 
-        # 6. Java 桥接类与时间同步
+        # 6. Java 桥接与辅助类
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/NativeTime.java
         package com.example.seckillcloc;
         public class NativeTime {
@@ -324,7 +324,7 @@ jobs:
         }
         EOF
 
-        # 9. 主界面 MainActivity (原生经典布局)
+        # 9. 主界面 MainActivity
         cat << 'EOF' > app/src/main/java/com/example/seckillcloc/MainActivity.kt
         package com.example.seckillcloc
 
@@ -406,7 +406,7 @@ jobs:
         }
         EOF
 
-        # 10. 原生布局文件 activity_main.xml
+        # 10. 原生布局
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -490,7 +490,7 @@ jobs:
         </LinearLayout>
         EOF
 
-        # 11. 资源与配置
+        # 11. 配置与签名保护
         cat << 'EOF' > app/src/main/res/values/strings.xml
         <resources>
             <string name="app_name">Seckill HUD MAX</string>
@@ -551,8 +551,8 @@ jobs:
         </manifest>
         EOF
 
-        # 12. 编译打包 (带 stacktrace 方便查错)
-        gradle wrapper
+        # 12. 强制使用 Gradle 8.4 版本进行安全打包
+        gradle wrapper --gradle-version 8.4
         chmod +x gradlew
         ./gradlew assembleDebug --stacktrace
         
